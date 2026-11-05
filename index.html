@@ -77,6 +77,7 @@
   <section id="scan" class="card hidden">
     <div id="cam" class="cam"><video id="video" autoplay muted playsinline></video></div>
     <p id="prompt" class="prompt">กำลังเตรียมระบบ…</p>
+    <div id="dbg" class="small" style="text-align:center"></div>
     <button id="cancelScan" class="btn ghost">ยกเลิก</button>
   </section>
 
@@ -92,7 +93,7 @@
 
 <script>
 /* ===== ตั้งค่า: วาง URL ของ Apps Script Web App ที่นี่ ===== */
-const API_URL = 'https://script.google.com/macros/s/AKfycbwuiys7qkxFMEvDL2tDSqxb86jVBQWEXyEAeuwmvVG29lgHCvHqaqEb7ZH3AjptpjEA5w/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycby_ei2fsSAbmYQXIl8fQz5uh-q7IdTngCpmGU708oW7US1Dt9jXVXR-e_TvMrvEYc2L9Q/exec';
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/model/';
 
 const $ = id => document.getElementById(id);
@@ -175,24 +176,57 @@ function ear(e) {
   const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
   return (d(e[1], e[5]) + d(e[2], e[4])) / (2 * d(e[0], e[3]));
 }
-async function waitForBlink(timeoutMs = 25000) {
-  const v = $('video'), t0 = Date.now();
-  let open = 0, frames = 0, closed = false;
-  while (Date.now() - t0 < timeoutMs) {
+const DEBUG = new URLSearchParams(location.search).has('debug');
+function dbg(t) { if (DEBUG) $('dbg').textContent = t; }
+
+// ใช้ภาพขนาดเล็กลงเพื่อให้ตรวจได้หลายเฟรมต่อวินาทีบนมือถือ
+function detectLandmarks() {
+  return faceapi.detectSingleFace($('video'), new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 })).withFaceLandmarks();
+}
+
+/* ตรวจว่าเป็นคนจริง: ลองหลับตา–ลืมตาก่อน ถ้าไม่ผ่านจะเปลี่ยนเป็นหันหน้าแทน */
+async function waitForLiveness() {
+  if (await tryBlink(12000)) return;
+  if (await tryHeadTurn(20000)) return;
+  throw new Error('ตรวจสอบใบหน้าไม่ผ่าน กรุณาลองใหม่ในที่มีแสงสว่าง (ถ้าใส่แว่นที่สะท้อนแสง ลองถอดก่อน)');
+}
+
+async function tryBlink(ms) {
+  const t0 = Date.now(), hist = [];
+  let closed = false;
+  while (Date.now() - t0 < ms) {
     checkCancel();
-    const r = await faceapi.detectSingleFace(v, detOpts()).withFaceLandmarks();
-    if (!r) { setPrompt('ไม่พบใบหน้า — ให้ใบหน้าอยู่กลางกรอบ', 'warn'); open = 0; frames = 0; closed = false; await sleep(80); continue; }
+    const r = await detectLandmarks();
+    if (!r) { if (!closed) setPrompt('ไม่พบใบหน้า — ให้ใบหน้าอยู่กลางกรอบ', 'warn'); await sleep(50); continue; }
     const e = (ear(r.landmarks.getLeftEye()) + ear(r.landmarks.getRightEye())) / 2;
-    frames++;
-    if (frames <= 3) { open = Math.max(open, e); setPrompt('มองกล้อง แล้วกะพริบตาช้าๆ 1 ครั้ง', 'ok'); continue; }
-    if (!closed) {
-      if (e < open * 0.72) closed = true;
-      else open = Math.max(e, open * 0.99);
-    } else if (e > open * 0.88) {
-      return true;
+    const sorted = hist.slice().sort((a, b) => a - b);
+    const base = sorted.length ? sorted[Math.floor(sorted.length * 0.7)] : e; // ค่าตาเปิดปกติ
+    dbg(`EAR ${e.toFixed(3)} / ปกติ ${base.toFixed(3)} / ${closed ? 'หลับ' : 'เปิด'}`);
+    if (hist.length >= 4) {
+      if (!closed && e < base * 0.8) closed = true;
+      else if (closed && e > base * 0.9) return true;
     }
+    if (!closed) { hist.push(e); if (hist.length > 15) hist.shift(); }
+    setPrompt(closed ? 'ลืมตาได้เลย' : 'หลับตาค้างไว้ 1 วินาที แล้วลืมตา', 'ok');
   }
-  throw new Error('ไม่พบการกะพริบตา กรุณาลองใหม่');
+  return false;
+}
+
+async function tryHeadTurn(ms) {
+  const t0 = Date.now();
+  let turned = false;
+  while (Date.now() - t0 < ms) {
+    checkCancel();
+    const r = await detectLandmarks();
+    if (!r) { setPrompt('ไม่พบใบหน้า — ให้ใบหน้าอยู่กลางกรอบ', 'warn'); await sleep(50); continue; }
+    const p = r.landmarks.positions;               // 36 = หางตาซ้าย, 45 = หางตาขวา, 30 = ปลายจมูก
+    const ratio = (p[30].x - p[36].x) / (p[45].x - p[36].x);
+    const off = Math.abs(ratio - 0.5);
+    dbg(`หันหน้า ${off.toFixed(3)} / ${turned ? 'หันแล้ว' : 'ยังไม่หัน'}`);
+    if (!turned) { setPrompt('หันหน้าไปทางซ้ายหรือขวาช้าๆ', 'ok'); if (off > 0.15) turned = true; }
+    else { setPrompt('ดีมาก — หันกลับมามองตรง', 'ok'); if (off < 0.08) return true; }
+  }
+  return false;
 }
 
 async function captureFace(timeoutMs = 8000) {
@@ -228,7 +262,7 @@ async function doCheckin(type) {
     setPrompt(`สวัสดีคุณ ${emp.name} — กำลังเปิดกล้อง…`);
     const locP = getLocation(); locP.catch(() => {});
     await Promise.all([loadModels(), startCamera()]);
-    await waitForBlink();
+    await waitForLiveness();
     setPrompt('ดีมาก! ค้างไว้สักครู่…', 'ok');
     const descriptor = await captureFace();
     const photo = snapshot();
