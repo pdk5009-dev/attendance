@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a56db">
+<title>ลงเวลาปฏิบัติงาน</title>
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/dist/face-api.js"></script>
+<style>
+  :root { --blue:#1a56db; --green:#0e9f6e; --red:#e02424; --orange:#d97706; --bg:#f3f5f9; --text:#1f2937; --muted:#6b7280; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"Sarabun","Noto Sans Thai",system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  .app { max-width:440px; margin:0 auto; padding:16px; min-height:100vh; }
+  header { text-align:center; padding:12px 0 18px; }
+  header h1 { margin:0; font-size:22px; color:var(--blue); }
+  #clock { color:var(--muted); font-size:15px; margin-top:4px; }
+  .card { background:#fff; border-radius:16px; padding:20px; box-shadow:0 2px 12px rgba(0,0,0,.06); }
+  .hidden { display:none !important; }
+  h2 { margin:0 0 14px; font-size:19px; text-align:center; }
+  label { display:block; font-size:14px; color:var(--muted); margin:12px 0 6px; }
+  input { width:100%; padding:13px 14px; font-size:17px; border:1px solid #d1d5db; border-radius:10px; font-family:inherit; }
+  input:focus { outline:2px solid var(--blue); border-color:transparent; }
+  .row { display:flex; gap:12px; margin-top:18px; }
+  .btn { flex:1; width:100%; border:0; border-radius:12px; padding:16px; font-size:18px; font-weight:600; font-family:inherit; color:#fff; cursor:pointer; margin-top:12px; }
+  .row .btn { margin-top:0; padding:22px 10px; font-size:20px; }
+  .btn:active { transform:scale(.98); }
+  .in { background:var(--green); } .out { background:var(--orange); }
+  .primary { background:var(--blue); }
+  .ghost { background:#eef2f7; color:var(--text); font-weight:500; font-size:16px; }
+  .link { display:block; text-align:center; margin-top:18px; color:var(--muted); font-size:14px; }
+  .small { font-size:14px; color:var(--muted); margin-top:8px; word-break:break-all; }
+  .cam { position:relative; width:100%; aspect-ratio:3/4; border-radius:50% / 40%; overflow:hidden; background:#111; border:5px solid #d1d5db; transition:border-color .2s; }
+  .cam.ok { border-color:var(--green); } .cam.warn { border-color:var(--orange); }
+  video { width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
+  .prompt { text-align:center; font-size:18px; font-weight:600; min-height:52px; margin:16px 0 4px; }
+  .result-icon { font-size:64px; text-align:center; }
+  .kv { display:flex; justify-content:space-between; padding:9px 0; border-bottom:1px solid #f0f0f0; font-size:16px; }
+  .kv span:first-child { color:var(--muted); }
+  .badge { padding:2px 10px; border-radius:20px; color:#fff; font-size:14px; }
+  .err { color:var(--red); text-align:center; font-size:17px; line-height:1.5; }
+  .consent { font-size:13px; color:var(--muted); margin-top:16px; line-height:1.5; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>ลงเวลาปฏิบัติงาน</h1>
+    <div id="clock">&nbsp;</div>
+  </header>
+
+  <!-- หน้าหลัก -->
+  <section id="home" class="card">
+    <label for="empId">รหัสพนักงาน</label>
+    <input id="empId" autocomplete="off" autocapitalize="characters" placeholder="เช่น E001">
+    <div class="row">
+      <button class="btn in" data-type="in">เข้างาน</button>
+      <button class="btn out" data-type="out">ออกงาน</button>
+    </div>
+    <p class="consent">การลงเวลาจะใช้กล้องเพื่อยืนยันใบหน้า และใช้ตำแหน่ง GPS เพื่อยืนยันว่าอยู่ในพื้นที่ปฏิบัติงาน</p>
+    <a href="#" id="toAdmin" class="link">สำหรับแอดมิน: ลงทะเบียนใบหน้า</a>
+  </section>
+
+  <!-- แอดมิน -->
+  <section id="admin" class="card hidden">
+    <h2>ลงทะเบียนใบหน้า</h2>
+    <label for="adminPin">รหัสแอดมิน</label>
+    <input id="adminPin" type="password" inputmode="numeric">
+    <label for="regEmpId">รหัสพนักงานที่จะลงทะเบียน</label>
+    <input id="regEmpId" autocomplete="off" autocapitalize="characters">
+    <button id="startReg" class="btn primary">เริ่มลงทะเบียน</button>
+    <button id="showCoords" class="btn ghost">ดูพิกัดตรงนี้ (สำหรับตั้งจุดลงเวลา)</button>
+    <div id="coordsOut" class="small"></div>
+    <a href="#" id="backHome" class="link">← กลับหน้าหลัก</a>
+  </section>
+
+  <!-- สแกน -->
+  <section id="scan" class="card hidden">
+    <div id="cam" class="cam"><video id="video" autoplay muted playsinline></video></div>
+    <p id="prompt" class="prompt">กำลังเตรียมระบบ…</p>
+    <button id="cancelScan" class="btn ghost">ยกเลิก</button>
+  </section>
+
+  <!-- ผลลัพธ์ -->
+  <section id="result" class="card hidden">
+    <div id="resultIcon" class="result-icon"></div>
+    <h2 id="resultTitle"></h2>
+    <div id="resultBody"></div>
+    <button id="done" class="btn primary">ตกลง</button>
+  </section>
+</div>
+<canvas id="snap" hidden></canvas>
+
+<script>
+/* ===== ตั้งค่า: วาง URL ของ Apps Script Web App ที่นี่ ===== */
+const API_URL = 'https://script.google.com/macros/s/AKfycbwuiys7qkxFMEvDL2tDSqxb86jVBQWEXyEAeuwmvVG29lgHCvHqaqEb7ZH3AjptpjEA5w/exec';
+const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/model/';
+
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let stream = null, cancelled = false, modelsPromise = null;
+
+/* ---------- UI ---------- */
+function show(id) { ['home', 'admin', 'scan', 'result'].forEach(s => $(s).classList.toggle('hidden', s !== id)); }
+function setPrompt(text, state) { $('prompt').textContent = text; $('cam').className = 'cam ' + (state || ''); }
+function tick() { $('clock').textContent = new Date().toLocaleString('th-TH', { dateStyle: 'full', timeStyle: 'medium' }); }
+tick(); setInterval(tick, 1000);
+try { $('empId').value = localStorage.getItem('empId') || ''; } catch (e) {}
+
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+function showResult(ok, title, rows, errorText) {
+  $('resultIcon').textContent = ok ? '✅' : '⚠️';
+  $('resultTitle').textContent = title;
+  $('resultBody').innerHTML = ok
+    ? rows.map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span>${v}</span></div>`).join('')
+    : `<p class="err">${esc(errorText)}</p>`;
+  show('result');
+}
+
+/* ---------- ระบบ ---------- */
+function preflight() {
+  if (!window.isSecureContext) throw new Error('ต้องเปิดผ่าน https:// เท่านั้น');
+  if (!API_URL.startsWith('https://') || API_URL.includes('วาง_ID')) throw new Error('ยังไม่ได้ตั้งค่า API_URL ในไฟล์ index.html');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('เบราว์เซอร์นี้ไม่รองรับกล้อง กรุณาเปิดด้วย Chrome หรือ Safari');
+}
+
+async function api(action, data) {
+  let res;
+  try {
+    // ส่งเป็น text/plain เพื่อไม่ให้เกิด CORS preflight กับ Apps Script
+    res = await fetch(API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ action }, data)) });
+  } catch (e) { throw new Error('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ตรวจสอบอินเทอร์เน็ต'); }
+  const j = await res.json();
+  if (!j.ok) throw new Error(j.error || 'เกิดข้อผิดพลาด');
+  return j;
+}
+
+function loadModels() {
+  if (!modelsPromise) {
+    modelsPromise = Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+    ]).catch(e => { modelsPromise = null; throw new Error('โหลดโมเดลใบหน้าไม่สำเร็จ ตรวจสอบอินเทอร์เน็ต'); });
+  }
+  return modelsPromise;
+}
+if (window.faceapi) loadModels().catch(() => {}); // โหลดล่วงหน้า
+
+function getLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error('อุปกรณ์ไม่รองรับ GPS'));
+    navigator.geolocation.getCurrentPosition(p => resolve(p.coords), err => {
+      reject(new Error({ 1: 'กรุณาอนุญาตให้เข้าถึงตำแหน่ง (Location) แล้วลองใหม่',
+                         2: 'หาตำแหน่งไม่ได้ กรุณาเปิด GPS',
+                         3: 'หาตำแหน่งนานเกินไป ลองใหม่อีกครั้ง' }[err.code] || err.message));
+    }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+  });
+}
+
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+  } catch (e) {
+    throw new Error(e.name === 'NotAllowedError' ? 'กรุณาอนุญาตให้ใช้กล้อง แล้วลองใหม่' : 'เปิดกล้องไม่ได้: ' + e.message);
+  }
+  const v = $('video'); v.srcObject = stream; await v.play();
+}
+function stopCamera() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } }
+function checkCancel() { if (cancelled) throw new Error('CANCELLED'); }
+const detOpts = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
+
+/* ตรวจว่าเป็นคนจริง: ต้องกะพริบตา (Eye Aspect Ratio) */
+function ear(e) {
+  const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  return (d(e[1], e[5]) + d(e[2], e[4])) / (2 * d(e[0], e[3]));
+}
+async function waitForBlink(timeoutMs = 25000) {
+  const v = $('video'), t0 = Date.now();
+  let open = 0, frames = 0, closed = false;
+  while (Date.now() - t0 < timeoutMs) {
+    checkCancel();
+    const r = await faceapi.detectSingleFace(v, detOpts()).withFaceLandmarks();
+    if (!r) { setPrompt('ไม่พบใบหน้า — ให้ใบหน้าอยู่กลางกรอบ', 'warn'); open = 0; frames = 0; closed = false; await sleep(80); continue; }
+    const e = (ear(r.landmarks.getLeftEye()) + ear(r.landmarks.getRightEye())) / 2;
+    frames++;
+    if (frames <= 3) { open = Math.max(open, e); setPrompt('มองกล้อง แล้วกะพริบตาช้าๆ 1 ครั้ง', 'ok'); continue; }
+    if (!closed) {
+      if (e < open * 0.72) closed = true;
+      else open = Math.max(e, open * 0.99);
+    } else if (e > open * 0.88) {
+      return true;
+    }
+  }
+  throw new Error('ไม่พบการกะพริบตา กรุณาลองใหม่');
+}
+
+async function captureFace(timeoutMs = 8000) {
+  const v = $('video'), t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    checkCancel();
+    const r = await faceapi.detectSingleFace(v, detOpts()).withFaceLandmarks().withFaceDescriptor();
+    if (r && r.detection.score > 0.6) return Array.from(r.descriptor);
+    await sleep(80);
+  }
+  throw new Error('จับใบหน้าไม่ได้ กรุณาอยู่ในที่มีแสงสว่างเพียงพอ');
+}
+
+function snapshot() {
+  const v = $('video'), c = $('snap'), w = 320;
+  c.width = w; c.height = Math.round(v.videoHeight * w / v.videoWidth);
+  c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.7).split(',')[1];
+}
+
+function euclid(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += (a[i] - b[i]) ** 2; return Math.sqrt(s); }
+
+/* ---------- ลงเวลา ---------- */
+async function doCheckin(type) {
+  const empId = $('empId').value.trim().toUpperCase();
+  if (!empId) { $('empId').focus(); return; }
+  try { localStorage.setItem('empId', empId); } catch (e) {}
+  cancelled = false; show('scan'); setPrompt('กำลังตรวจสอบข้อมูล…');
+  try {
+    preflight();
+    const emp = await api('getEmployee', { empId });
+    if (!emp.registered) throw new Error('ยังไม่ได้ลงทะเบียนใบหน้า กรุณาติดต่อแอดมิน');
+    setPrompt(`สวัสดีคุณ ${emp.name} — กำลังเปิดกล้อง…`);
+    const locP = getLocation(); locP.catch(() => {});
+    await Promise.all([loadModels(), startCamera()]);
+    await waitForBlink();
+    setPrompt('ดีมาก! ค้างไว้สักครู่…', 'ok');
+    const descriptor = await captureFace();
+    const photo = snapshot();
+    stopCamera();
+    setPrompt('กำลังรอพิกัด GPS…');
+    const c = await locP;
+    setPrompt('กำลังบันทึก…');
+    const r = await api('checkin', { empId, type, lat: c.latitude, lng: c.longitude, accuracy: c.accuracy, descriptor, photo });
+    const color = { 'สาย': 'var(--red)', 'ออกก่อนเวลา': 'var(--orange)' }[r.status] || 'var(--green)';
+    showResult(true, `${r.typeLabel}สำเร็จ`, [
+      ['ชื่อ', esc(r.name)],
+      ['วันที่', esc(r.date)],
+      ['เวลา', `<b>${esc(r.time)}</b>`],
+      ['สถานะ', `<span class="badge" style="background:${color}">${esc(r.status)}</span>`],
+      ['จุดลงเวลา', `${esc(r.location)} (${r.distance} ม.)`],
+    ]);
+  } catch (err) {
+    stopCamera();
+    if (err.message === 'CANCELLED') return show('home');
+    showResult(false, 'ลงเวลาไม่สำเร็จ', null, err.message);
+  }
+}
+
+/* ---------- ลงทะเบียนใบหน้า (แอดมิน) ---------- */
+async function doRegister() {
+  const adminPin = $('adminPin').value.trim();
+  const empId = $('regEmpId').value.trim().toUpperCase();
+  if (!adminPin || !empId) return alert('กรุณากรอกรหัสแอดมินและรหัสพนักงาน');
+  cancelled = false; show('scan'); setPrompt('กำลังตรวจสอบข้อมูล…');
+  try {
+    preflight();
+    const emp = await api('getEmployee', { empId });
+    if (emp.registered && !confirm(`คุณ ${emp.name} ลงทะเบียนใบหน้าไว้แล้ว ต้องการลงทะเบียนใหม่แทนหรือไม่?`)) return show('admin');
+    await Promise.all([loadModels(), startCamera()]);
+    const tips = ['มองตรงที่กล้อง', 'หันหน้าไปทางซ้ายเล็กน้อย', 'หันหน้าไปทางขวาเล็กน้อย', 'เงยหน้าขึ้นเล็กน้อย', 'มองตรงอีกครั้ง'];
+    const descriptors = [];
+    for (let i = 0; i < tips.length; i++) {
+      setPrompt(`(${i + 1}/${tips.length}) ${tips[i]}`, '');
+      await sleep(1500);
+      descriptors.push(await captureFace());
+      setPrompt(`(${i + 1}/${tips.length}) ✓`, 'ok');
+      await sleep(400);
+    }
+    stopCamera();
+    // ตรวจว่าเป็นคนเดียวกันทุกภาพ
+    for (let i = 0; i < descriptors.length; i++)
+      for (let j = i + 1; j < descriptors.length; j++)
+        if (euclid(descriptors[i], descriptors[j]) > 0.6) throw new Error('ภาพใบหน้าไม่สม่ำเสมอ (อาจมีคนอื่นเข้ากล้อง) กรุณาลองใหม่');
+    setPrompt('กำลังบันทึก…');
+    const r = await api('register', { adminPin, empId, descriptors });
+    $('regEmpId').value = '';
+    showResult(true, 'ลงทะเบียนใบหน้าสำเร็จ', [['รหัส', esc(empId)], ['ชื่อ', esc(r.name)]]);
+  } catch (err) {
+    stopCamera();
+    if (err.message === 'CANCELLED') return show('admin');
+    showResult(false, 'ลงทะเบียนไม่สำเร็จ', null, err.message);
+  }
+}
+
+/* ---------- ปุ่ม ---------- */
+document.querySelectorAll('[data-type]').forEach(b => b.onclick = () => doCheckin(b.dataset.type));
+$('toAdmin').onclick = e => { e.preventDefault(); show('admin'); };
+$('backHome').onclick = e => { e.preventDefault(); show('home'); };
+$('startReg').onclick = doRegister;
+$('cancelScan').onclick = () => { cancelled = true; stopCamera(); show('home'); };
+$('done').onclick = () => show('home');
+$('showCoords').onclick = async () => {
+  $('coordsOut').textContent = 'กำลังหาพิกัด…';
+  try {
+    const c = await getLocation();
+    $('coordsOut').textContent = `ละติจูด ${c.latitude.toFixed(6)}, ลองจิจูด ${c.longitude.toFixed(6)} (±${Math.round(c.accuracy)} ม.)`;
+  } catch (e) { $('coordsOut').textContent = e.message; }
+};
+</script>
+</body>
+</html>
